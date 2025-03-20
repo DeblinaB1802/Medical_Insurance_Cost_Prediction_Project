@@ -1,0 +1,192 @@
+# Import necessary libraries
+import os
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import logging
+import joblib
+from sklearn.linear_model import LinearRegression
+from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+def load_data(file_path):
+    """Load the dataset and check if file exists."""
+    if not os.path.exists(file_path):
+        logging.error(f"File not found: {file_path}")
+        return None
+    try:
+        df = pd.read_csv(file_path)
+        logging.info(f"Dataset loaded successfully. Shape: {df.shape}")
+        return df
+    except Exception as e:
+        logging.error(f"Error loading dataset: {e}")
+        return None
+
+def describe_dataset(df):
+    """Print dataset statistics and info."""
+    logging.info(f"Dataset Summary:\n{df.describe()}")
+    logging.info(f"Dataset Info:\n{df.info()}")
+    logging.info(f"Dataset Shape: {df.shape}")
+
+def handle_missing_values(df):
+    """Handle missing values in dataset."""
+    if df.isnull().sum().sum() == 0:
+        logging.info("No missing values found.")
+        return df
+
+    logging.info("Handling missing values...")
+
+    # Define categorical and numerical features
+    categorical_cols = ['sex', 'smoker', 'region']
+    numerical_cols = ['bmi', 'age', 'children']
+
+    # Forward fill categorical values
+    for col in categorical_cols:
+        df[col] = df[col].fillna(method='ffill')
+
+    # Fill numerical values with mean
+    for col in numerical_cols:
+        df[col].fillna(df[col].mean(), inplace=True)
+
+    # Drop rows where all values are NaN
+    df.dropna(how='all', inplace=True)
+
+    logging.info(f"Missing values handled. New dataset shape: {df.shape}")
+    return df
+
+def encode_features(df):
+    """Encode categorical features using OneHotEncoding and scale numerical features."""
+    categorical_cols = ['sex', 'smoker', 'region']
+    numerical_cols = ['bmi', 'age', 'children']
+
+    # Define transformations
+    preprocessor = ColumnTransformer([
+        ('num', StandardScaler(), numerical_cols),
+        ('cat', OneHotEncoder(), categorical_cols)
+    ])
+
+    # Separate features and target variable
+    X = df.drop(columns=['charges'])
+    y = df['charges']
+
+    # Transform features
+    X_transformed = preprocessor.fit_transform(X)
+    
+    logging.info("Feature encoding completed successfully.")
+    return X_transformed, y, preprocessor  
+
+def train_test_data_split(X, y):
+    """Split data into training and testing sets."""
+    return train_test_split(X, y, test_size=0.3, random_state=101)
+
+def train_model(X_train, y_train, model, model_name):
+    """Train the model using a pipeline."""
+    pipeline = Pipeline([
+        ('regressor', model)
+    ])
+    
+    pipeline.fit(X_train, y_train)
+    logging.info(f"{model_name} model training complete.")
+    
+    return pipeline
+
+def evaluate_model(model, model_name, X_test, y_test):
+    """Evaluate model performance on the test dataset."""
+    y_pred = model.predict(X_test)
+    mae = mean_absolute_error(y_test, y_pred)
+    mse = mean_squared_error(y_test, y_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_test, y_pred)
+
+    logging.info(f"{model_name} Model Performance:")
+    logging.info(f"MAE: {mae:.4f}")
+    logging.info(f"MSE: {mse:.4f}")
+    logging.info(f"RMSE: {rmse:.4f}")
+    logging.info(f"R² Score: {r2:.4f}")
+
+    return mae, mse, rmse, r2, y_pred
+
+def save_model(model, preprocessor, file_name):
+    """Save trained model and preprocessor."""
+    joblib.dump({'model': model, 'preprocessor': preprocessor}, file_name)
+    logging.info(f"Model saved as {file_name}")
+
+def main():
+    """Main function to execute the complete pipeline."""
+    file_path = r"C:\Users\debli\Downloads\archive (6)\insurance.csv"
+    com_mat = {}
+    preds = []
+    
+    df = load_data(file_path)
+    if df is None:
+        return
+
+    describe_dataset(df)
+    df = handle_missing_values(df)
+    X, y, preprocessor = encode_features(df)
+    X_train, X_test, y_train, y_test = train_test_data_split(X, y)
+
+    models = {
+        'Linear Regression': LinearRegression(),
+        'SVR': SVR(),
+        'Random Forest Regression': RandomForestRegressor(n_estimators=100, random_state=42)
+    }
+
+    for model_name, model in models.items():
+        trained_model = train_model(X_train, y_train, model, model_name)
+        mae, mse, rmse, r2_score, y_pred = evaluate_model(trained_model, model_name, X_test, y_test)
+        preds.append(y_pred)
+        com_mat[model_name] = [mae, mse, rmse, r2_score]
+        save_model(trained_model, preprocessor, f"insurance_model_{model_name.replace(' ', '_')}.pkl")
+    
+    results_df = pd.DataFrame(com_mat, index=['MAE', 'MSE', "RMSE", 'R2_score'])
+    logging.info(f"Comparison of performances of the models : \n{results_df}")
+
+    """Plotting scatter plots for each model prediction.."""
+    fig, axes = plt.subplots(1, 3, figsize=(50, 3))
+    colors = ["blue", "green", "red"]
+    models = ["Linear Regression", "SVR", "Random Forest Regression"]
+    for i, ax in enumerate(axes):
+        sns.scatterplot(x=y_test, y=preds[i], alpha=0.6, color=colors[i], ax=ax)
+        ax.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], linestyle="dashed", color="black")  # Perfect Prediction Line
+        ax.set_title(f"{models[i]} Predictions vs True Values")
+        ax.set_xlabel("True Values")
+        ax.set_ylabel("Predicted Values")
+    plt.show()
+
+    """Graphical representation models' predictions """
+    # Sorting values for better visualization
+    sorted_indices = np.argsort(y_test)
+    y_test_sorted = np.array(y_test)[sorted_indices]
+    sorted_preds = []
+    for pred in preds:
+        sorted_preds.append(pred[sorted_indices])
+
+    # Set figure size
+    plt.figure(figsize=(15, 6))
+
+    # Plot True vs Predicted for each model
+    plt.plot(y_test_sorted, label="True Values", linestyle="solid", color="black", linewidth=2)
+    plt.plot(sorted_preds[0], label="Linear Regression Predictions", linestyle="dashed", color="blue")
+    plt.plot(sorted_preds[1], label="SVR Predictions", linestyle="dashed", color="red")
+    plt.plot(sorted_preds[2], label="Random Forest Predictions", linestyle="dashed", color="green")
+
+    # Labels and Legend
+    plt.xlabel("Test Sample Index (Sorted by True Value)")
+    plt.ylabel("Medical Insurance Cost ($)")
+    plt.title("True vs Predicted Insurance Costs")
+    plt.legend()
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
